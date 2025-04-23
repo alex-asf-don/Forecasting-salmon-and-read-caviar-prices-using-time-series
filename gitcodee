@@ -1,0 +1,196 @@
+import requests
+import pandas as pd
+import matplotlib.pyplot as plt
+import re
+from statsmodels.tsa.stattools import kpss
+from arch.unitroot import PhillipsPerron
+from statsmodels.graphics.tsaplots import plot_pacf
+from statsmodels.tsa.stattools import adfuller
+import numpy as np
+import pandas as pd
+from statsmodels.tsa.stattools import adfuller, acf, pacf, q_stat
+from statsmodels.stats.diagnostic import acorr_ljungbox
+
+url1 = 'https://eurocredit.ru/inflation/products/ryba-losos/'
+filename = 'file.ext'
+
+response = requests.get(url1)
+if response.status_code == 200:
+    with open(filename, 'wb') as f:
+        f.write(response.content)
+    print(f'Файл успешно скачан и сохранён как {filename}')
+else:
+    print(f'Ошибка при скачивании файла: статус {response.status_code}')
+
+url2 = 'https://eurocredit.ru/inflation/products/ikra/'
+filename = 'file.ext'
+
+response = requests.get(url2)
+if response.status_code == 200:
+    with open(filename, 'wb') as f:
+        f.write(response.content)
+    print(f'Файл успешно скачан и сохранён как {filename}')
+else:
+    print(f'Ошибка при скачивании файла: статус {response.status_code}')
+
+
+tables1 = pd.read_html(url1)
+tables2 = pd.read_html(url2)
+
+df = tables1[1].iloc[3:]
+df2 = tables2[1].iloc[3:]
+
+def to_float(price):
+  cleaned = re.sub(r'[^\d.]', '', price)
+  return float(cleaned)
+
+df['Цена'] = df['Цена за 1 кг'].apply(to_float)
+df2['Цена'] = df2['Цена за 1 кг'].apply(to_float)
+
+last_value_1 = df['Цена'].iloc[0]
+scale_factor_1 = 800/last_value_1
+df['Цена'] = df['Цена'] * scale_factor_1
+
+last_value_2 = df2['Цена'].iloc[0]
+scale_factor_2 = 5000/last_value_2
+df2['Цена'] = df2['Цена'] * scale_factor_2
+
+month_map = {
+    'январь': '01', 'февраль': '02', 'март': '03', 'апрель': '04',
+    'май': '05', 'июнь': '06', 'июль': '07', 'август': '08',
+    'сентябрь': '09', 'октябрь': '10', 'ноябрь': '11', 'декабрь': '12'
+}
+
+def replace_month(text):
+    for rus_month, num in month_map.items():
+        if rus_month in text.lower():
+            return text.lower().replace(rus_month, num)
+    return text
+
+df['Дата_число'] = df['Дата'].apply(replace_month)
+df['Дата'] = pd.to_datetime(df['Дата_число'], format='%m %Y', errors='coerce')
+
+
+plt.figure(figsize=(12,6))
+plt.plot(df['Дата'], df['Цена'], marker='o')
+plt.title('Динамика цены за 1 кг')
+plt.xlabel('Дата')
+plt.ylabel('Цена (₽)')
+plt.grid(True)
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+prices = df['Цена'][::-1]
+prices2 = df2['Цена'][::-1]
+print(df2)
+print(prices2)
+
+result = adfuller(prices)
+print(f'ADF Statistic: {result[0]}')
+print(f'p-value: {result[1]}')
+if result[1] < 0.05:
+    print("Ряд является стационарным")
+else:
+    print("Ряд НЕ является стационарным")
+
+statistic, p_value, n_lags, critical_values = kpss(prices, regression='ct', nlags="auto")
+print(f'KPSS Statistic: {statistic}')
+print(f'p-value: {p_value}')
+if p_value < 0.05:
+    print("Ряд НЕ является стационарным")
+else:
+    print("Ряд является стационарным")
+
+pp_test = PhillipsPerron(prices)
+print(f'PP Statistic: {pp_test.stat}')
+print(f'p-value: {pp_test.pvalue}')
+
+if result[1] < 0.05:
+    print("Ряд является стационарным")
+else:
+    print("Ряд НЕ является стационарным")
+
+adf_result = adfuller(prices, maxlag=1, regression='c', autolag=None) 
+print(f'ADF Statistic: {adf_result[0]}')
+print(f'p-value: {adf_result[1]}')
+print('Critical Values:')
+for key, value in adf_result[4].items():
+    print(f'  {key}: {value}')
+log_len = np.log(len(prices))
+print(f'log(length(prices)) = {log_len}')
+lb_test = acorr_ljungbox(prices, lags=[4], return_df=True)
+print(lb_test)
+
+
+prices_d1 = np.diff(prices, n=1)
+plt.plot(prices_d1, linestyle='-')
+plt.show()
+plt.figure(figsize=(12, 6))
+plot_pacf(prices_d1, lags=20, alpha=0.05)  # `lags=20` means check up to 20 lags
+plt.xlabel("Lag")
+plt.ylabel("PACF Value")
+plt.show()
+
+print("ADF Statistic:", adf_result[0])
+print("p-value:", adf_result[1])
+print("Critical Values:", adf_result[4])
+
+if adf_result[1] < 0.05:
+    print("Series is stationary (reject null hypothesis)")
+else:
+    print("Series is non-stationary (fail to reject null hypothesis)")
+
+result1 = adfuller(prices_d1)
+print(f'ADF Statistic: {result1[0]}')
+print(f'p-value: {result1[1]}')
+if result1[1] < 0.05:
+    print("Ряд является стационарным")
+else:
+    print("Ряд НЕ является стационарным")
+
+
+def adf_test(timeseries):
+    print("Results of Dickey-Fuller Test:")
+    dftest = adfuller(timeseries, autolag="AIC")
+    dfoutput = pd.Series(
+        dftest[0:4],
+        index=[
+            "Test Statistic",
+            "p-value",
+            "#Lags Used",
+            "Number of Observations Used",
+        ],
+    )
+    for key, value in dftest[4].items():
+        dfoutput["Critical Value (%s)" % key] = value
+    print(dfoutput)
+print(adf_test(prices_d1))
+
+statistic, p_value, n_lags, critical_values = kpss(prices_d1, regression='ct', nlags="auto")
+print(f'KPSS Statistic: {statistic}')
+print(f'p-value: {p_value}')
+if p_value < 0.05:
+    print("Ряд НЕ является стационарным")
+else:
+    print("Ряд является стационарным")
+
+pp_test = PhillipsPerron(prices_d1)
+print(f'PP Statistic: {pp_test.stat}')
+print(f'p-value: {pp_test.pvalue}')
+if result1[1] < 0.05:
+    print("Ряд является стационарным")
+else:
+    print("Ряд НЕ является стационарным")
+
+adf_result = adfuller(prices_d1, maxlag=1, regression='c', autolag=None) 
+print(f'ADF Statistic: {adf_result[0]}')
+print(f'p-value: {adf_result[1]}')
+print('Critical Values:')
+for key, value in adf_result[4].items():
+    print(f'  {key}: {value}')
+log_len = np.log(len(prices_d1))
+print(f'log(length(prices)) = {log_len}')
+lb_test = acorr_ljungbox(prices_d1, lags=[4], return_df=True)
+print(lb_test)
+
